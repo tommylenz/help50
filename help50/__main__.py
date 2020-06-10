@@ -13,6 +13,9 @@ import lib50
 import termcolor
 import pexpect
 
+from multiprocessing import Pool
+import time
+
 from . import __version__, internal, Error
 
 ON_WINDOWS = os.name == "nt"
@@ -77,6 +80,23 @@ def render_help(help):
         cprint_wrapped(re.sub(r"`([^`]+)`", r"\033[1m\1\033[22m", " " .join(help[1])), "yellow")
 
 
+# Adopted from https://theizo.com/2017/04/03/waiting-animation-in-python/
+def waiting_animation(n):
+    n = n % 3 + 1
+    dots = n * "." + (3-n) * " "
+    cprint_wrapped("\r Asking for help " + dots, "yellow")
+    sys.stdout.flush()
+    time.sleep(0.5)
+    return n
+
+
+def get_help(args):
+    try:
+        helpers_dir = args.slug if args.dev else lib50.local(args.slug)
+        return True, helpers_dir
+    except lib50.Error:
+        return False  # Raises error in main()
+
 def main():
     parser = ArgumentParser(prog="help50",
                             description="A command-line tool that helps "
@@ -130,16 +150,23 @@ def main():
         raise Error("Careful, you forgot to tell me with which command you "
                     "need help!")
     print()
-    cprint_wrapped("Asking for help...", "yellow")
+    with Pool(processes=1) as pool:
+        res = pool.apply_async(get_help, (args,))
+        waiting, n = True, 0
+        while waiting:
+            try:
+                waiting = not res.successful()
+                data = res.get()
+            except AssertionError:
+                n = waiting_animation(n)
     print()
 
-    try:
-        helpers_dir = args.slug if args.dev else lib50.local(args.slug)
-    except lib50.Error:
+    if data[0] is False:
         raise Error("Failed to fetch helpers, please ensure that you are connected to the internet!")
-
-    internal.load_helpers(helpers_dir)
-    render_help(internal.get_help(script))
+    else:  # data[0] is True and therefore helpers_dir is returned as well
+        helpers_dir = data[1]
+        internal.load_helpers(helpers_dir)
+        render_help(internal.get_help(script))
 
 
 if __name__ == "__main__":
